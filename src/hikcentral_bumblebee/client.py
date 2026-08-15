@@ -21,10 +21,10 @@ from typing import Any
 import httpx
 
 from .models import (
-    Area,
-    DoorElement,
-    CameraElement,
     AccessController,
+    Area,
+    CameraElement,
+    DoorElement,
     VideoIntercom,
 )
 
@@ -394,7 +394,12 @@ class BumblebeeClient:
         )
 
     def get_camera_elements(self) -> list[CameraElement]:
-        """List camera elements."""
+        """List camera elements.
+
+        Parses the Encoder/Camera sub-blocks so each CameraElement carries
+        the RTSP source (address, credentials) and the HikCentral thumbnail
+        URL when the server provides one.
+        """
         data = self._call(
             "/ISAPI/Bumblebee/CameraElements",
             body_obj={"CameraElementsRequest": {"AreaID": -1, "DepthTraversal": 0}},
@@ -403,7 +408,52 @@ class BumblebeeClient:
         items = cam_data.get("CameraElementList", {}).get("CameraElement", [])
         if isinstance(items, dict):
             items = [items]
-        return [CameraElement(id=str(c.get("ID", "")), name=c.get("Name", "")) for c in items]
+        result: list[CameraElement] = []
+        for c in items:
+            enc = c.get("Encoder", {}) or {}
+            cam = c.get("Camera", {}) or {}
+            thumb = c.get("ThumbnailInfo", {}) or {}
+            result.append(
+                CameraElement(
+                    id=str(c.get("ID", "")),
+                    name=c.get("Name", ""),
+                    address=(
+                        cam.get("RelatedChannelAddress")
+                        or enc.get("Address")
+                        or None
+                    ),
+                    username=(
+                        cam.get("RelatedChannelUserName")
+                        or enc.get("UserName")
+                        or None
+                    ),
+                    password=enc.get("Password") or None,
+                    thumbnail_url=thumb.get("Url") or None,
+                )
+            )
+        return result
+
+    def get_camera_thumbnail(self, camera_id: str | int) -> bytes | None:
+        """Fetch a single JPEG thumbnail for a camera element.
+
+        HikCentral serves camera thumbnails as raw JPEG from
+        ``/ISAPI/Bumblebee/CameraElements/{id}/Thumbnail``. This is a raw
+        HTTP GET (no MT logical, no XML body); the response body IS the JPEG.
+        Returns None on any failure (camera offline, session issue, etc.).
+        """
+        if self.sid is None:
+            raise HikCentralError(-1, "Not logged in — call login() first")
+        url = f"/ISAPI/Bumblebee/CameraElements/{camera_id}/Thumbnail?SID={self.sid}"
+        try:
+            resp = self._client.get(url, headers={"AppendInfo": self._build_append_info()})
+            if resp.status_code != 200:
+                return None
+            ctype = resp.headers.get("Content-Type", "")
+            if "image" not in ctype:
+                return None
+            return resp.content
+        except httpx.HTTPError:
+            return None
 
     def get_access_controllers(self) -> list[AccessController]:
         """List access controllers."""

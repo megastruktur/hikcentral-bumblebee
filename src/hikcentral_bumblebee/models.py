@@ -34,6 +34,7 @@ class CameraElement:
     address: str | None = None
     username: str | None = None
     password: str | None = None
+    thumbnail_url: str | None = None
 
 
 @dataclass

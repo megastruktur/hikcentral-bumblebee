@@ -9,7 +9,6 @@ a mocked _call() to isolate the mapping logic from the XML parsing layer
 
 from tests.conftest import FakeResponse
 
-
 # ------------------------------------------------------------------------------------------------------------------------------------------
 # Capture-shaped response data (mirrors real prod responses: {ErrorModule, ErrorCode, Data}, no Response wrapper)
 # ------------------------------------------------------------------------------------------------------------------------------------------

@@ -6,8 +6,9 @@ With MT=PUT the server returns ErrorCode 6.
 Body: <DoorElementOperation><Action>N</Action><Direction>0</Direction></DoorElementOperation>
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 class FakeResponse:

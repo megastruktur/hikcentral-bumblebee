@@ -133,9 +133,10 @@ class TestAppendInfo:
 
     def test_append_info_decrypts_correctly(self):
         """The AppendInfo can be decrypted with the derived key."""
-        from hikcentral_bumblebee import BumblebeeClient
         from Crypto.Cipher import AES
         from Crypto.Util.Padding import unpad
+
+        from hikcentral_bumblebee import BumblebeeClient
 
         password = "secret"
         challenge = "challenge48"

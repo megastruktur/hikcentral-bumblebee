@@ -7,8 +7,9 @@ These tests define the expected behaviour:
 - raises on non-zero ErrorCode
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 class FakeResponse:

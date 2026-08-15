@@ -3,10 +3,10 @@ RED phase: tests for models dataclasses.
 """
 
 from hikcentral_bumblebee.models import (
-    Area,
-    DoorElement,
-    CameraElement,
     AccessController,
+    Area,
+    CameraElement,
+    DoorElement,
     VideoIntercom,
 )
 

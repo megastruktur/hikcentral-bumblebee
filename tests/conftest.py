@@ -2,16 +2,25 @@
 Pytest configuration and shared fixtures for hikcentral_bumblebee tests.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 class FakeResponse:
     """Minimal httpx.Response substitute — no httpx import needed in tests."""
 
-    def __init__(self, text: str, status_code: int = 200):
+    def __init__(
+        self,
+        text: str,
+        status_code: int = 200,
+        content: bytes = b"",
+        headers: dict | None = None,
+    ):
         self.text = text
         self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
 
 
 # ---------------------------------------------------------------------------
