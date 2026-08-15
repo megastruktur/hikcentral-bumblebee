@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hikcentral_bumblebee"
+version = "0.1.0"
+description = "Bumblebee API client for HikCentral Pro v2.x (OverSea_Pro)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "MARC-10", email = "marc-10@example.com" }
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "pycryptodome>=3.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hikcentral_bumblebee"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+markers = [
+    "live: marks tests as live integration tests (require HIK_TEST=1 and real credentials)",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
