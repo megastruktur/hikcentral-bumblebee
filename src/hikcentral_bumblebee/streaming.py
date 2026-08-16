@@ -55,6 +55,7 @@ from typing import Self
 __all__ = [
     "AuthentyStreamClient",
     "H264RtpDepacketizer",
+    "H265RtpDepacketizer",
     "StreamError",
     "StreamInfo",
     "capture_h264",
@@ -199,6 +200,58 @@ class H264RtpDepacketizer:
         return []
 
 
+class H265RtpDepacketizer:
+    """Turn RTP H.265/HEVC payloads (RFC 7798) into Annex-B NAL units.
+
+    Handles single NAL units (types 0–47), AP (48) and FU (49).
+    PACI (50) and other reserved types are skipped.
+    """
+
+    _START_CODE = b"\x00\x00\x00\x01"
+
+    def __init__(self) -> None:
+        self._fu_buf: bytearray | None = None
+
+    def feed(self, payload: bytes) -> list[bytes]:
+        """Feed one RTP payload, return zero or more complete Annex-B NALs."""
+        if len(payload) < 2:
+            return []
+        nal_type = (payload[0] >> 1) & 0x3F
+        if nal_type < 48:  # single NAL unit packet
+            return [self._START_CODE + payload]
+        if nal_type == 48:  # aggregation packet
+            out: list[bytes] = []
+            off = 2
+            while off + 2 <= len(payload):
+                size = struct.unpack(">H", payload[off : off + 2])[0]
+                if off + 2 + size > len(payload):
+                    break
+                out.append(self._START_CODE + payload[off + 2 : off + 2 + size])
+                off += 2 + size
+            return out
+        if nal_type == 49:  # fragmentation unit
+            if len(payload) < 3:
+                return []
+            fu_hdr = payload[2]
+            fu_type = fu_hdr & 0x3F
+            if fu_hdr & 0x80:  # start — rebuild the 2-byte NAL header
+                nal_hdr = bytes([(payload[0] & 0x81) | (fu_type << 1), payload[1]])
+                self._fu_buf = bytearray(nal_hdr) + payload[3:]
+            elif self._fu_buf is not None:
+                self._fu_buf += payload[3:]
+            if fu_hdr & 0x40 and self._fu_buf is not None:  # end
+                nal = bytes(self._fu_buf)
+                self._fu_buf = None
+                return [self._START_CODE + nal]
+            return []
+        return []  # 50 PACI / reserved — skip
+
+    def flush(self) -> list[bytes]:
+        """Drop any incomplete FU assembly."""
+        self._fu_buf = None
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Authenty RTSP client
 # ---------------------------------------------------------------------------
@@ -233,8 +286,14 @@ class AuthentyStreamClient:
         self._sock: socket.socket | None = None
         self._buf = b""
         self._session: str | None = None
-        self._depak = H264RtpDepacketizer()
+        self._depak: H264RtpDepacketizer | H265RtpDepacketizer = H264RtpDepacketizer()
+        self._codec: str = "h264"
         self._cseq = 10_000
+
+    @property
+    def codec(self) -> str:
+        """Video codec negotiated in the last DESCRIBE: 'h264' or 'h265'."""
+        return self._codec
 
     # -- context manager ---------------------------------------------------
 
@@ -298,9 +357,7 @@ class AuthentyStreamClient:
 
     def connect(self) -> None:
         """TCP connect + OPTIONS."""
-        self._sock = socket.create_connection(
-            (self._info.host, _RTSP_PORT), timeout=self._timeout
-        )
+        self._sock = socket.create_connection((self._info.host, _RTSP_PORT), timeout=self._timeout)
         self._sock.settimeout(self._timeout)
         self._cseq += 1
         self._request(
@@ -332,9 +389,7 @@ class AuthentyStreamClient:
         if self._status_of(head_text) != 401:
             raise StreamError(f"Expected 401 challenge, got: {head_text.splitlines()[0]}")
         # PKD header spans multiple lines until the empty line
-        m = re.search(
-            r'RAND="([^"]+)"', head_text
-        )
+        m = re.search(r'RAND="([^"]+)"', head_text)
         p = re.search(
             r"PKD:\s*(-----BEGIN PUBLIC KEY-----.*?-----END PUBLIC KEY-----)",
             head_text,
@@ -354,25 +409,19 @@ class AuthentyStreamClient:
         iv16 = os.urandom(16)
         key32 = os.urandom(16) + rand_raw
         sep_data = _aes_enc(
-            rand_raw
-            + b":"
-            + self._info.username.encode()
-            + b":"
-            + self._info.password.encode(),
+            rand_raw + b":" + self._info.username.encode() + b":" + self._info.password.encode(),
             key32,
             iv16,
         )
         ident = _aes_enc(self._info.token_b64.encode(), key32, iv16)
-        key_hdr = base64.b64encode(
-            PKCS1_v1_5.new(pubkey).encrypt(iv16 + b":" + key32)
-        )
+        key_hdr = base64.b64encode(PKCS1_v1_5.new(pubkey).encrypt(iv16 + b":" + key32))
         self._cseq += 1
         assert self._sock is not None
         self._sock.sendall(
             f"DESCRIBE {self._info.url} RTSP/1.0\r\n"
             f"CSeq: {self._cseq}\r\n"
             "Accept: application/sdp\r\n"
-            f"Authorization: SEP DATA=\"{sep_data.decode()}\"\r\n"
+            f'Authorization: SEP DATA="{sep_data.decode()}"\r\n'
             f"Key: {key_hdr.decode()}\r\n"
             f"Identification: {ident.decode()}\r\n"
             f"User-Agent: {_USER_AGENT}\r\n"
@@ -386,7 +435,12 @@ class AuthentyStreamClient:
 
     def play(self) -> str:
         """DESCRIBE(authed) + SETUP + PLAY. Returns the RTSP session id."""
-        self.describe_authed()
+        sdp = self.describe_authed()
+        # pick the depacketizer by the negotiated video codec (HikCentral
+        # mixes H.264 and H.265 cameras on the same VTDU)
+        if re.search(r"a=rtpmap:\d+\s+H265", sdp, re.IGNORECASE):
+            self._codec = "h265"
+            self._depak = H265RtpDepacketizer()
         self._cseq += 1
         head, _ = self._request(
             f"SETUP {self._info.url}/trackID=1 RTSP/1.0\r\n"
@@ -478,7 +532,11 @@ class AuthentyStreamClient:
         return pkt[hdr:]
 
     def h264_chunks(self, max_seconds: float | None = None) -> Iterator[bytes]:
-        """Yield Annex-B NAL units as they arrive (blocking generator)."""
+        """Yield Annex-B NAL units as they arrive (blocking generator).
+
+        Despite the historical name, the units follow the codec negotiated
+        in ``play()`` — H.264 or H.265 (see ``codec``).
+        """
         deadline = time.monotonic() + max_seconds if max_seconds else None
         assert self._sock is not None
         while deadline is None or time.monotonic() < deadline:

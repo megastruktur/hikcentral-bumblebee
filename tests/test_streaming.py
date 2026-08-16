@@ -77,13 +77,13 @@ class TestDepacketizer:
         d = H264RtpDepacketizer()
         # FU-A of NAL type 5 in 3 fragments
         fu_ind = bytes([0xE0 | 28])
-        start = fu_ind + bytes([0x80 | 5]) + b"\xAA\xBB"
-        cont = fu_ind + bytes([0x00 | 5]) + b"\xCC"
-        end = fu_ind + bytes([0x40 | 5]) + b"\xDD"
+        start = fu_ind + bytes([0x80 | 5]) + b"\xaa\xbb"
+        cont = fu_ind + bytes([0x00 | 5]) + b"\xcc"
+        end = fu_ind + bytes([0x40 | 5]) + b"\xdd"
         assert d.feed(start) == []
         assert d.feed(cont) == []
         out = d.feed(end)
-        assert out == [b"\x00\x00\x00\x01" + bytes([0xE0 | 5]) + b"\xAA\xBB\xCC\xDD"]
+        assert out == [b"\x00\x00\x00\x01" + bytes([0xE0 | 5]) + b"\xaa\xbb\xcc\xdd"]
 
     def test_fu_a_missing_start_ignored(self):
         d = H264RtpDepacketizer()
@@ -93,7 +93,9 @@ class TestDepacketizer:
     def test_stap_a(self):
         d = H264RtpDepacketizer()
         n1, n2 = self._nal(7), self._nal(8)
-        payload = bytes([0x60 | 24]) + struct.pack(">H", len(n1)) + n1 + struct.pack(">H", len(n2)) + n2
+        payload = (
+            bytes([0x60 | 24]) + struct.pack(">H", len(n1)) + n1 + struct.pack(">H", len(n2)) + n2
+        )
         out = d.feed(payload)
         assert out == [b"\x00\x00\x00\x01" + n1, b"\x00\x00\x00\x01" + n2]
 
@@ -114,10 +116,10 @@ class TestRtpPayloadStrip:
     def _pkt(self, pt=96, csrc=0, payload=b"\x67\x4d\x00\x01"):
         b0 = 0x80 | csrc
         return (
-            bytes([b0, 0x80 | pt])      # V/P/X/CC + M/PT
-            + b"\x00\x01"              # seq
-            + b"\x00\x00\x00\x10"     # timestamp
-            + b"\xDE\xAD\xBE\xEF"     # SSRC
+            bytes([b0, 0x80 | pt])  # V/P/X/CC + M/PT
+            + b"\x00\x01"  # seq
+            + b"\x00\x00\x00\x10"  # timestamp
+            + b"\xde\xad\xbe\xef"  # SSRC
             + payload
         )
 
@@ -132,5 +134,61 @@ class TestRtpPayloadStrip:
 
     def test_crc_count(self):
         pkt = self._pkt(csrc=1, payload=b"\x67")
-        pkt = pkt[:12] + b"\xFF\xFF\xFF\xFF" + pkt[12:]  # insert 1 CSRC word (4 bytes)
+        pkt = pkt[:12] + b"\xff\xff\xff\xff" + pkt[12:]  # insert 1 CSRC word (4 bytes)
         assert AuthentyStreamClient._rtp_payload(pkt) == b"\x67"
+
+
+# ---------------------------------------------------------------------------
+# H265RtpDepacketizer (RFC 7798)
+# ---------------------------------------------------------------------------
+
+
+class TestH265Depacketizer:
+    def test_single_nal(self):
+        from hikcentral_bumblebee.streaming import H265RtpDepacketizer
+
+        d = H265RtpDepacketizer()
+        # NAL type 33 (SPS) in the 2-byte header: type<<1
+        payload = bytes([(33 << 1), 0x01]) + b"\x12\x34"
+        assert d.feed(payload) == [b"\x00\x00\x00\x01" + payload]
+
+    def test_ap_two_nals(self):
+        from hikcentral_bumblebee.streaming import H265RtpDepacketizer
+
+        d = H265RtpDepacketizer()
+        n1, n2 = b"\x42\x01\xaa", b"\x44\x01\xbb\xcc"
+        ap = (
+            bytes([(48 << 1), 0x00])
+            + len(n1).to_bytes(2, "big")
+            + n1
+            + len(n2).to_bytes(2, "big")
+            + n2
+        )
+        out = d.feed(ap)
+        assert out == [b"\x00\x00\x00\x01" + n1, b"\x00\x00\x00\x01" + n2]
+
+    def test_fu_reassembly(self):
+        from hikcentral_bumblebee.streaming import H265RtpDepacketizer
+
+        d = H265RtpDepacketizer()
+        fu_type = 19  # IDR_W_RADL
+        # payload header carries Type=49; FU header carries S|E|real type
+        start = bytes([(49 << 1), 0x01]) + bytes([0x80 | fu_type]) + b"\x11\x22"
+        cont = bytes([(49 << 1), 0x01]) + bytes([fu_type]) + b"\x33"
+        end = bytes([(49 << 1), 0x01]) + bytes([0x40 | fu_type]) + b"\x44"
+        assert d.feed(start) == []
+        assert d.feed(cont) == []
+        out = d.feed(end)
+        assert len(out) == 1
+        nal = out[0]
+        assert nal[:4] == b"\x00\x00\x00\x01"
+        # rebuilt 2-byte NAL header: F/LayerId/TID preserved, type = 19
+        assert (nal[4] >> 1) & 0x3F == fu_type
+        assert nal[5] == 0x01
+        assert nal[6:] == b"\x11\x22\x33\x44"
+
+    def test_short_payload_skipped(self):
+        from hikcentral_bumblebee.streaming import H265RtpDepacketizer
+
+        d = H265RtpDepacketizer()
+        assert d.feed(b"\x50") == []
