@@ -19,3 +19,5 @@ venv/
 # Editors
 .idea/
 .vscode/
+.omc/
+.omc/

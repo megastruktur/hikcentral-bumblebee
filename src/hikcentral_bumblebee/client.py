@@ -27,6 +27,7 @@ from .models import (
     DoorElement,
     VideoIntercom,
 )
+from .streaming import StreamInfo
 
 
 class HikCentralError(Exception):
@@ -491,6 +492,31 @@ class BumblebeeClient:
             )
             for v in items
         ]
+
+    def get_stream_info(self, camera_id: str | int) -> StreamInfo:
+        """Fetch everything needed to start a live stream for a camera.
+
+        Calls CommonUrl and parses the RTSP URL, device credentials and
+        the VSM token (base64 string — used verbatim as the
+        Identification payload of the Authenty handshake).
+        """
+        
+        if self.sid is None:
+            raise HikCentralError(-1, "Not logged in — call login() first")
+        data = self._call(
+            "/ISAPI/Bumblebee/CommonUrl",
+            body_obj={
+                "CommonUrlRequest": {
+                    "requestType": 1,
+                    "cameraElementID": str(camera_id),
+                    "extraType": 0,
+                    "adaptiveNetWork": 0,
+                }
+            },
+        )
+        common = _get_data(data).get("CommonUrlList", {}).get("commonUrl", {})
+        host = self.base_url.split("://", 1)[-1].split(":")[0].rstrip("/")
+        return StreamInfo.from_common_url(common, server_host=host)
 
     def keepalive(self) -> None:
         """Send keepalive to maintain session."""
