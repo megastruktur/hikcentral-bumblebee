@@ -203,6 +203,52 @@ class TestDiscoveryEndpoints:
         url = mock_http.post.call_args.args[0]
         assert "VideoIntercoms" in url
 
+    def test_get_video_intercom_detail(self, mock_client):
+        """Detail call parses doors + door-station camera elements."""
+        detail = {
+            "ErrorModule": "0",
+            "ErrorCode": "0",
+            "Data": {"VideoIntercom": {
+                "ID": "311",
+                "BaseInfo": {"Alias": "30.18", "Online": "1"},
+                "DoorList": {"Door": [{"ID": "1396"}, {"ID": "1397"}]},
+                "CameraList": {"Camera": [
+                    {
+                        "ID": "287",
+                        "Name": "Camera1",
+                        "Online": "1",
+                        "CameraElement": {"ID": "1391", "Name": "vezd MR5"},
+                    },
+                    {
+                        "ID": "288",
+                        "Name": "Camera2",
+                        "Online": "0",
+                        "CameraElement": {"ID": ""},
+                    },
+                ]},
+            }},
+        }
+        calls = []
+
+        def fake_call(path, logical="GET", body_obj=None):
+            calls.append(path)
+            return detail
+
+        cli, _ = mock_client
+        cli._call = fake_call
+
+        vi = cli.get_video_intercom("311")
+
+        assert calls == ["/ISAPI/Bumblebee/ACS/Device/VideoIntercoms/311"]
+        assert vi.id == "311"
+        assert vi.name == "30.18"
+        assert vi.online is True
+        assert vi.door_ids == ["1396", "1397"]
+        assert len(vi.cameras) == 1  # empty CameraElement.ID entries skipped
+        assert vi.cameras[0].element_id == "1391"
+        assert vi.cameras[0].name == "vezd MR5"
+        assert vi.cameras[0].online is True
+
     def test_all_discovery_calls_include_append_info(self, mock_client):
         """Every discovery POST includes the AppendInfo header."""
         cli, mock_http = mock_client

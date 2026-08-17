@@ -26,6 +26,7 @@ from .models import (
     CameraElement,
     DoorElement,
     VideoIntercom,
+    VideoIntercomCamera,
 )
 from .streaming import StreamInfo
 
@@ -492,6 +493,47 @@ class BumblebeeClient:
             )
             for v in items
         ]
+
+    def get_video_intercom(self, video_intercom_id: str | int) -> VideoIntercom:
+        """Get video intercom detail: linked doors and door-station cameras.
+
+        The per-device detail (unlike the list call) carries ``DoorList``
+        and ``CameraList``; the camera entries reference CameraElements
+        that ``get_camera_elements()`` never returns — this is the only
+        way to discover them (the same source the mobile app uses).
+        """
+        data = self._call(f"/ISAPI/Bumblebee/ACS/Device/VideoIntercoms/{video_intercom_id}")
+        vi = _get_data(data).get("VideoIntercom", {})
+
+        doors = vi.get("DoorList", {}).get("Door", [])
+        if isinstance(doors, dict):
+            doors = [doors]
+        door_ids = [str(d.get("ID", "")) for d in doors if d.get("ID")]
+
+        cameras = vi.get("CameraList", {}).get("Camera", [])
+        if isinstance(cameras, dict):
+            cameras = [cameras]
+        cams = [
+            VideoIntercomCamera(
+                element_id=str(c.get("CameraElement", {}).get("ID", "")),
+                name=(
+                    c.get("CameraElement", {}).get("Name")
+                    or c.get("Name")
+                    or ""
+                ),
+                online=_bool(c.get("Online", "0")),
+            )
+            for c in cameras
+            if c.get("CameraElement", {}).get("ID")
+        ]
+
+        return VideoIntercom(
+            id=str(vi.get("ID", "")),
+            name=vi.get("BaseInfo", {}).get("Alias", ""),
+            online=_bool(vi.get("BaseInfo", {}).get("Online", "0")),
+            door_ids=door_ids,
+            cameras=cams,
+        )
 
     def get_stream_info(self, camera_id: str | int) -> StreamInfo:
         """Fetch everything needed to start a live stream for a camera.

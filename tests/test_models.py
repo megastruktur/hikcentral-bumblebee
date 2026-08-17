@@ -65,3 +65,17 @@ class TestVideoIntercom:
     def test_video_intercom_basic(self):
         vi = VideoIntercom(id="1", name="Panel_1")
         assert vi.id == "1"
+
+    def test_video_intercom_defaults(self):
+        """Doors/cameras default to empty lists (back-compat constructor)."""
+        vi = VideoIntercom(id="1", name="Panel_1")
+        assert vi.door_ids == []
+        assert vi.cameras == []
+        assert vi.online is False
+
+    def test_video_intercom_camera_fields(self):
+        from hikcentral_bumblebee.models import VideoIntercomCamera
+
+        cam = VideoIntercomCamera(element_id="1391", name="vezd MR5", online=True)
+        assert cam.element_id == "1391"
+        assert cam.online is True
